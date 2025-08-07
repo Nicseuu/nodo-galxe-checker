@@ -37,13 +37,10 @@ VAULTS = [
     }
 ]
 
-# Cache of alerted wallets per vault
 notified = {}
-
 app = FastAPI()
 tg_app = Application.builder().token(BOT_TOKEN).build()
 
-# Send alert to Telegram
 async def send_telegram_alert(wallet: str, tvl: float, vault_name: str, group_name: str, vault_address: str):
     message = (
         f"✅ New Eligible Wallet for Galxe\n\n"
@@ -54,16 +51,13 @@ async def send_telegram_alert(wallet: str, tvl: float, vault_name: str, group_na
     )
     await tg_app.bot.send_message(chat_id=CHAT_ID, text=message, parse_mode="Markdown", disable_web_page_preview=False)
 
-# /status command
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Bot is online.")
 
-# /check command
 async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not context.args:
         await update.message.reply_text("Usage: /check <wallet_address>")
         return
-
     wallet = context.args[0].lower()
     async with httpx.AsyncClient() as client:
         res = await client.get(NODO_API)
@@ -89,12 +83,10 @@ async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("No data found for wallet.")
 
-# FastAPI /status
 @app.get("/status")
 async def status():
     return {"status": "online"}
 
-# FastAPI /check?wallet=...
 @app.get("/check")
 async def check(wallet: str):
     wallet = wallet.lower()
@@ -123,12 +115,8 @@ async def check(wallet: str):
 
     return output if output else {"wallet": wallet, "status": "No data found ❌", "tvl": 0}
 
-# FastAPI /api/depositors
 @app.get("/api/depositors")
-async def get_valid_wallets(
-    wallets: list[str] = Query(...),
-    authorization: str = Header(None)
-):
+async def get_valid_wallets(wallets: list[str] = Query(...), authorization: str = Header(None)):
     if authorization != f"Bearer {API_KEY}":
         raise HTTPException(status_code=401, detail="Unauthorized")
 
@@ -158,9 +146,14 @@ async def get_valid_wallets(
 
     return {"credential": eligible}
 
-# Start Telegram bot on startup
 @app.on_event("startup")
 async def startup():
     tg_app.add_handler(CommandHandler("status", status_command))
     tg_app.add_handler(CommandHandler("check", check_command))
-    asyncio.create_task(tg_app.run_polling())
+    await tg_app.initialize()
+    await tg_app.start()
+
+@app.on_event("shutdown")
+async def shutdown():
+    await tg_app.stop()
+    await tg_app.shutdown()

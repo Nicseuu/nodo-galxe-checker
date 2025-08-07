@@ -1,15 +1,41 @@
 from fastapi import FastAPI, Query, Header, HTTPException
 from typing import List
-import httpx
 from datetime import datetime
+import httpx
+import os
 
 app = FastAPI()
 
+# Config
 API_KEY = "your-secret-token"
 NODO_API = "https://ai-api.nodo.xyz/data-management/ext/vaults?partner=mmt"
 VAULT_ADDRESS = "0x72d394ff757d0b7795bb2ee5046aaeedcfc9c522f6565f8c0a4505670057e1eb"  # SUI-USDC vault
-MIN_TVL = 10  # USD
+MIN_TVL = 10
+TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
+# Memory cache
+notified_wallets = set()
+
+# Telegram alert
+async def send_telegram_alert(wallet: str, tvl: float):
+    message = (
+        f"✅ New Eligible Wallet for Galxe\n\n"
+        f"👛 Wallet: `{wallet}`\n"
+        f"💰 TVL: ${tvl:,.2f}\n"
+        f"🔗 Vault: https://ai.nodo.xyz/vault/{VAULT_ADDRESS}"
+    )
+    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
+    payload = {
+        "chat_id": TELEGRAM_CHAT_ID,
+        "text": message,
+        "parse_mode": "Markdown",
+        "disable_web_page_preview": False
+    }
+    async with httpx.AsyncClient() as client:
+        await client.post(url, json=payload)
+
+# Galxe API route
 @app.get("/api/depositors")
 async def get_valid_wallets(
     wallets: List[str] = Query(...),
@@ -31,6 +57,9 @@ async def get_valid_wallets(
                 if user_data:
                     tvl = float(user_data.get("tvl", 0))
                     if tvl >= MIN_TVL:
+                        if wallet.lower() not in notified_wallets:
+                            await send_telegram_alert(wallet, tvl)
+                            notified_wallets.add(wallet.lower())
                         eligible.append({
                             "id": wallet,
                             "timestamp": int(datetime.utcnow().timestamp())
@@ -38,3 +67,33 @@ async def get_valid_wallets(
             break
 
     return {"credential": eligible}
+
+# Manual check
+@app.get("/check")
+async def check_wallet(wallet: str):
+    async with httpx.AsyncClient() as client:
+        response = await client.get(NODO_API)
+        data = response.json()
+
+    for vault in data.get("data", []):
+        if vault.get("address") == VAULT_ADDRESS:
+            user_data = vault.get("wallets", {}).get(wallet.lower())
+            if user_data:
+                tvl = float(user_data.get("tvl", 0))
+                status = "Eligible ✅" if tvl >= MIN_TVL else "Not Eligible ❌"
+
+                if tvl >= MIN_TVL and wallet.lower() not in notified_wallets:
+                    await send_telegram_alert(wallet, tvl)
+                    notified_wallets.add(wallet.lower())
+
+                return {
+                    "wallet": wallet,
+                    "status": status,
+                    "tvl": tvl
+                }
+
+    return {
+        "wallet": wallet,
+        "status": "No data found ❌",
+        "tvl": 0
+    }

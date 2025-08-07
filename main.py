@@ -6,18 +6,18 @@ import os
 
 app = FastAPI()
 
-# Config
-API_KEY = "your-secret-token"
-NODO_API = "https://ai-api.nodo.xyz/data-management/ext/vaults?partner=mmt"
-VAULT_ADDRESS = "0x72d394ff757d0b7795bb2ee5046aaeedcfc9c522f6565f8c0a4505670057e1eb"  # SUI-USDC vault
-MIN_TVL = 10
+# Environment Config
+API_KEY = os.getenv("API_KEY")
+NODO_API = os.getenv("NODO_API", "https://ai-api.nodo.xyz/data-management/ext/vaults?partner=mmt")
+VAULT_ADDRESS = os.getenv("VAULT_ADDRESS")  # Required
+MIN_TVL = float(os.getenv("MIN_TVL", 10))
 TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
 
-# Memory cache
+# Cache for already alerted wallets
 notified_wallets = set()
 
-# Telegram alert
+# Send alert to Telegram
 async def send_telegram_alert(wallet: str, tvl: float):
     message = (
         f"✅ New Eligible Wallet for Galxe\n\n"
@@ -35,7 +35,7 @@ async def send_telegram_alert(wallet: str, tvl: float):
     async with httpx.AsyncClient() as client:
         await client.post(url, json=payload)
 
-# Galxe API route
+# For Galxe credential API
 @app.get("/api/depositors")
 async def get_valid_wallets(
     wallets: List[str] = Query(...),
@@ -68,7 +68,7 @@ async def get_valid_wallets(
 
     return {"credential": eligible}
 
-# Manual check
+# Manual check route
 @app.get("/check")
 async def check_wallet(wallet: str):
     async with httpx.AsyncClient() as client:
@@ -80,12 +80,10 @@ async def check_wallet(wallet: str):
             user_data = vault.get("wallets", {}).get(wallet.lower())
             if user_data:
                 tvl = float(user_data.get("tvl", 0))
-                status = "Eligible ✅" if tvl >= MIN_TVL else "Not Eligible ❌"
-
                 if tvl >= MIN_TVL and wallet.lower() not in notified_wallets:
                     await send_telegram_alert(wallet, tvl)
                     notified_wallets.add(wallet.lower())
-
+                status = "Eligible ✅" if tvl >= MIN_TVL else "Not Eligible ❌"
                 return {
                     "wallet": wallet,
                     "status": status,

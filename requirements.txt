@@ -1,4 +1,2 @@
-fastapi
-httpx
-uvicorn
 python-telegram-bot[job-queue]==20.7
+nest_asyncio

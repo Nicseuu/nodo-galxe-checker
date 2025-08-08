@@ -1,102 +1,130 @@
-from fastapi import FastAPI, Query, Header, HTTPException
-from typing import List
-from datetime import datetime
-import httpx
 import os
+import logging
+import asyncio
+import requests
+from telegram import Update
+from telegram.ext import (
+    ApplicationBuilder,
+    CommandHandler,
+    ContextTypes,
+)
+from dotenv import load_dotenv
 
-app = FastAPI()
+load_dotenv()
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
-# ENV Config
-API_KEY = os.getenv("API_KEY")
-NODO_API = os.getenv("NODO_API", "https://ai-api.nodo.xyz/data-management/ext/vaults?partner=mmt")
-VAULT_ADDRESS = os.getenv("VAULT_ADDRESS")
-MIN_TVL = float(os.getenv("MIN_TVL", "10"))
-TELEGRAM_BOT_TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
-TELEGRAM_CHAT_ID = os.getenv("TELEGRAM_CHAT_ID")
+# Telegram config
+BOT_TOKEN = os.getenv("BOT_TOKEN")
+GROUP_ID = int(os.getenv("GROUP_ID", "-1002653992951"))
 
-# Cache of notified wallets
-notified_wallets = set()
+# Vault config
+VAULTS = [
+    {
+        "platform": "Momentum Vaults",
+        "name": "SUI-USDC",
+        "address": "0x72d394ff757d0b7795bb2ee5046aaeedcfc9c522f6565f8c0a4505670057e1eb",
+        "link": "https://ai.nodo.xyz/vault/0x72d394ff757d0b7795bb2ee5046aaeedcfc9c522f6565f8c0a4505670057e1eb",
+        "last_tvl": None,
+    },
+    {
+        "platform": "Momentum Vaults",
+        "name": "DEEP-SUI",
+        "address": "0x5da10fa39c1fc9b0bf62956211e1a15cf29d3c73ada439c7b57b61e34c106448",
+        "link": "https://ai.nodo.xyz/vault/0x5da10fa39c1fc9b0bf62956211e1a15cf29d3c73ada439c7b57b61e34c106448",
+        "last_tvl": None,
+    },
+    {
+        "platform": "Momentum Vaults",
+        "name": "WAL-SUI",
+        "address": "0x56a891d68d8f1eef31ff43333ae593a31474f062502cc28ee0e9b69cda1f95d0",
+        "link": "https://ai.nodo.xyz/vault/0x56a891d68d8f1eef31ff43333ae593a31474f062502cc28ee0e9b69cda1f95d0",
+        "last_tvl": None,
+    },
+    {
+        "platform": "Cetus Vault",
+        "name": "SUI-USDC",
+        "address": "0xd0fe855b80e952c86e2e513e0f46f4cd906c8a95a955fc9ee31c6053ba127989",
+        "link": "https://ai.nodo.xyz/vault/0xd0fe855b80e952c86e2e513e0f46f4cd906c8a95a955fc9ee31c6053ba127989",
+        "last_tvl": None,
+    },
+]
 
-# Telegram Alert Sender
-async def send_telegram_alert(wallet: str, tvl: float):
-    message = (
-        f"✅ New Eligible Wallet for Galxe\n\n"
-        f"👛 Wallet: `{wallet}`\n"
-        f"💰 TVL: ${tvl:,.2f}\n"
-        f"🔗 Vault: https://ai.nodo.xyz/vault/{VAULT_ADDRESS}"
-    )
-    url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": TELEGRAM_CHAT_ID,
-        "text": message,
-        "parse_mode": "Markdown",
-        "disable_web_page_preview": False
-    }
-    async with httpx.AsyncClient() as client:
-        await client.post(url, json=payload)
+API_URL = "https://ai-api.nodo.xyz/data-management/ext/vaults?partner=mmt"
 
-# ✅ /status → confirms bot is online
-@app.get("/status")
-async def status():
-    return {"status": "online"}
+async def check_deposits(context: ContextTypes.DEFAULT_TYPE):
+    try:
+        res = requests.get(API_URL)
+        data = res.json()["data"]
 
-# ✅ /check → manually check one wallet
-@app.get("/check")
-async def check_wallet(wallet: str):
-    async with httpx.AsyncClient() as client:
-        response = await client.get(NODO_API)
-        data = response.json()
+        for vault in VAULTS:
+            vault_data = next((item for item in data if item["address"].lower() == vault["address"].lower()), None)
+            if not vault_data:
+                continue
 
-    for vault in data.get("data", []):
-        if vault.get("address") == VAULT_ADDRESS:
-            user_data = vault.get("wallets", {}).get(wallet.lower())
-            if user_data:
-                tvl = float(user_data.get("tvl", 0))
-                if tvl >= MIN_TVL and wallet.lower() not in notified_wallets:
-                    await send_telegram_alert(wallet, tvl)
-                    notified_wallets.add(wallet.lower())
-                status = "Eligible ✅" if tvl >= MIN_TVL else "Not Eligible ❌"
-                return {
-                    "wallet": wallet,
-                    "status": status,
-                    "tvl": tvl
-                }
+            tvl = float(vault_data["tvl"]["value"])
+            if vault["last_tvl"] is None:
+                vault["last_tvl"] = tvl
+                continue
 
-    return {
-        "wallet": wallet,
-        "status": "No data found ❌",
-        "tvl": 0
-    }
+            diff = round(tvl - vault["last_tvl"], 2)
+            if diff >= 10:
+                message = (
+                    f"🚨 *New Deposit Alert!*\n"
+                    f"{vault['platform']} - *{vault['name']}*\n"
+                    f"💸 Amount: ${diff:,.2f}\n"
+                    f"📊 New TVL: ${tvl:,.2f}\n"
+                    f"🔗 [Open Vault]({vault['link']})"
+                )
+                await context.bot.send_message(chat_id=GROUP_ID, text=message, parse_mode="Markdown", disable_web_page_preview=False)
 
-# ✅ /api/depositors → for Galxe
-@app.get("/api/depositors")
-async def get_valid_wallets(
-    wallets: List[str] = Query(...),
-    authorization: str = Header(None)
-):
-    if authorization != f"Bearer {API_KEY}":
-        raise HTTPException(status_code=401, detail="Unauthorized")
+            vault["last_tvl"] = tvl
 
-    async with httpx.AsyncClient() as client:
-        response = await client.get(NODO_API)
-        data = response.json()
+    except Exception as e:
+        logger.error(f"Error checking vaults: {e}")
 
-    eligible = []
+async def apy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    try:
+        res = requests.get(API_URL)
+        data = res.json()["data"]
 
-    for vault in data.get("data", []):
-        if vault.get("address") == VAULT_ADDRESS:
-            for wallet in wallets:
-                user_data = vault.get("wallets", {}).get(wallet.lower())
-                if user_data:
-                    tvl = float(user_data.get("tvl", 0))
-                    if tvl >= MIN_TVL:
-                        if wallet.lower() not in notified_wallets:
-                            await send_telegram_alert(wallet, tvl)
-                            notified_wallets.add(wallet.lower())
-                        eligible.append({
-                            "id": wallet,
-                            "timestamp": int(datetime.utcnow().timestamp())
-                        })
-            break
+        message = "*NODO Vault APY Stats*\n\n"
+        for vault in VAULTS:
+            vault_data = next((item for item in data if item["address"].lower() == vault["address"].lower()), None)
+            if vault_data:
+                apy = vault_data["apy"]
+                tvl = vault_data["tvl"]["value"]
+                message += (
+                    f"{vault['platform']} - *{vault['name']}*\n"
+                    f"📈 APY: {apy:.2f}%\n"
+                    f"💰 TVL: ${tvl:,.2f}\n"
+                    f"{vault['link']}\n\n"
+                )
 
-    return {"credential": eligible}
+        await update.message.reply_text(message, parse_mode="Markdown", disable_web_page_preview=False)
+
+    except Exception as e:
+        logger.error(f"Error in /apy: {e}")
+        await update.message.reply_text("Failed to fetch vault data.")
+
+async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("✅ Bot is live and monitoring vaults.")
+
+async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    statuses = [f"{v['platform']} - {v['name']}: ${v['last_tvl']:,.2f}" if v['last_tvl'] else f"{v['platform']} - {v['name']}: Not checked yet" for v in VAULTS]
+    await update.message.reply_text("\n".join(statuses))
+
+async def main():
+    app = ApplicationBuilder().token(BOT_TOKEN).build()
+
+    app.add_handler(CommandHandler("check", check_command))
+    app.add_handler(CommandHandler("status", status_command))
+    app.add_handler(CommandHandler("apy", apy_command))
+
+    job_queue = app.job_queue
+    job_queue.run_repeating(check_deposits, interval=60, first=5)
+
+    await app.run_polling()
+
+if __name__ == "__main__":
+    asyncio.run(main())

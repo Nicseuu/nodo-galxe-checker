@@ -1,7 +1,3 @@
-# Install python-telegram-bot in Railway by updating your requirements.txt:
-# Add this line:
-# python-telegram-bot[job-queue]==20.7
-
 import os
 import logging
 import asyncio

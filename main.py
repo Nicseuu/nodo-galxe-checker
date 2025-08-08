@@ -52,15 +52,18 @@ VAULTS = [
 # Commands
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("Received /start command")
-    await update.message.reply_text("Bot is live and ready.")
+    if update.message:
+        await update.message.reply_text("Bot is live and ready.")
 
 async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("Received /check command")
-    await update.message.reply_text("✅ Bot is live and monitoring vaults.")
+    if update.message:
+        await update.message.reply_text("✅ Bot is live and monitoring vaults.")
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("Received /status command")
-    await update.message.reply_text("Status OK. Vault tracking is active.")
+    if update.message:
+        await update.message.reply_text("Status OK. Vault tracking is active.")
 
 async def apy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     logger.info("Received /apy command")
@@ -82,7 +85,8 @@ async def apy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔗 Open Vault: {vault['link']}"
         )
 
-    await update.message.reply_text("\n\n".join(messages), disable_web_page_preview=False)
+    if update.message:
+        await update.message.reply_text("\n\n".join(messages), disable_web_page_preview=False)
 
 # Monitor function
 async def monitor_vaults(app):
@@ -117,7 +121,7 @@ async def scheduler(app):
             await monitor_vaults(app)
         except Exception as e:
             logger.error(f"Monitor error: {e}")
-        await asyncio.sleep(300)  # 5 mins
+        await asyncio.sleep(300)
 
 # Main app
 async def main():
@@ -129,7 +133,10 @@ async def main():
     app.add_handler(CommandHandler("apy", apy_command))
 
     asyncio.create_task(scheduler(app))
-    await app.run_polling()
+    await app.initialize()
+    await app.start()
+    await app.updater.start_polling()
+    await app.updater.idle()
 
 if __name__ == '__main__':
     asyncio.run(main())

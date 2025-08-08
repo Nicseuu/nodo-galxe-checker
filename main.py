@@ -1,24 +1,26 @@
+# Install python-telegram-bot in Railway by updating your requirements.txt:
+# Add this line:
+# python-telegram-bot[job-queue]==20.7
+
 import os
 import logging
 import asyncio
-import requests
+import httpx
+import nest_asyncio
 from telegram import Update
-from telegram.ext import (
-    ApplicationBuilder,
-    CommandHandler,
-    ContextTypes,
-)
-from dotenv import load_dotenv
+from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
-load_dotenv()
+nest_asyncio.apply()
+
+# Logging
 logging.basicConfig(level=logging.INFO)
 logger = logging.getLogger(__name__)
 
-# Telegram config
+# Config
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-GROUP_ID = int(os.getenv("GROUP_ID", "-1002653992951"))
+GROUP_ID = -1002653992951
 
-# Vault config
+# Vaults to monitor
 VAULTS = [
     {
         "platform": "Momentum Vaults",
@@ -50,81 +52,84 @@ VAULTS = [
     },
 ]
 
-API_URL = "https://ai-api.nodo.xyz/data-management/ext/vaults?partner=mmt"
-
-async def check_deposits(context: ContextTypes.DEFAULT_TYPE):
-    try:
-        res = requests.get(API_URL)
-        data = res.json()["data"]
-
-        for vault in VAULTS:
-            vault_data = next((item for item in data if item["address"].lower() == vault["address"].lower()), None)
-            if not vault_data:
-                continue
-
-            tvl = float(vault_data["tvl"]["value"])
-            if vault["last_tvl"] is None:
-                vault["last_tvl"] = tvl
-                continue
-
-            diff = round(tvl - vault["last_tvl"], 2)
-            if diff >= 10:
-                message = (
-                    f"🚨 *New Deposit Alert!*\n"
-                    f"{vault['platform']} - *{vault['name']}*\n"
-                    f"💸 Amount: ${diff:,.2f}\n"
-                    f"📊 New TVL: ${tvl:,.2f}\n"
-                    f"🔗 [Open Vault]({vault['link']})"
-                )
-                await context.bot.send_message(chat_id=GROUP_ID, text=message, parse_mode="Markdown", disable_web_page_preview=False)
-
-            vault["last_tvl"] = tvl
-
-    except Exception as e:
-        logger.error(f"Error checking vaults: {e}")
-
-async def apy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    try:
-        res = requests.get(API_URL)
-        data = res.json()["data"]
-
-        message = "*NODO Vault APY Stats*\n\n"
-        for vault in VAULTS:
-            vault_data = next((item for item in data if item["address"].lower() == vault["address"].lower()), None)
-            if vault_data:
-                apy = vault_data["apy"]
-                tvl = vault_data["tvl"]["value"]
-                message += (
-                    f"{vault['platform']} - *{vault['name']}*\n"
-                    f"📈 APY: {apy:.2f}%\n"
-                    f"💰 TVL: ${tvl:,.2f}\n"
-                    f"{vault['link']}\n\n"
-                )
-
-        await update.message.reply_text(message, parse_mode="Markdown", disable_web_page_preview=False)
-
-    except Exception as e:
-        logger.error(f"Error in /apy: {e}")
-        await update.message.reply_text("Failed to fetch vault data.")
+# Commands
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Bot is live and ready.")
 
 async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("✅ Bot is live and monitoring vaults.")
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    statuses = [f"{v['platform']} - {v['name']}: ${v['last_tvl']:,.2f}" if v['last_tvl'] else f"{v['platform']} - {v['name']}: Not checked yet" for v in VAULTS]
-    await update.message.reply_text("\n".join(statuses))
+    await update.message.reply_text("Status OK. Vault tracking is active.")
 
+async def apy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    async with httpx.AsyncClient() as client:
+        response = await client.get("https://ai-api.nodo.xyz/data-management/ext/vaults?partner=mmt")
+        data = response.json()
+
+    messages = []
+    for vault in VAULTS:
+        item = next((v for v in data if v["address"] == vault["address"]), None)
+        if not item:
+            continue
+        apy = round(item.get("apy", 0), 2)
+        tvl = round(item.get("tvl", 0))
+        messages.append(
+            f"{vault['platform']}: [{vault['name']}]
+\n"
+            f"📈 APY: {apy}%\n"
+            f"💰 TVL: ${tvl:,.2f}\n"
+            f"🔗 Open Vault: {vault['link']}"
+        )
+
+    await update.message.reply_text("\n\n".join(messages), disable_web_page_preview=False)
+
+# Monitor function
+async def monitor_vaults(app):
+    async with httpx.AsyncClient() as client:
+        response = await client.get("https://ai-api.nodo.xyz/data-management/ext/vaults?partner=mmt")
+        data = response.json()
+
+    for vault in VAULTS:
+        item = next((v for v in data if v["address"] == vault["address"]), None)
+        if not item:
+            continue
+
+        current_tvl = item.get("tvl", 0)
+        if vault["last_tvl"] is not None:
+            diff = current_tvl - vault["last_tvl"]
+            if diff > 100:
+                message = (
+                    f"🚨 New Deposit Alert!\n"
+                    f"{vault['platform']}: {vault['name']}\n"
+                    f"💸 Amount: ${diff:,.2f}\n"
+                    f"📊 New TVL: ${current_tvl:,.2f}\n"
+                    f"🔗 {vault['link']}"
+                )
+                await app.bot.send_message(chat_id=GROUP_ID, text=message, disable_web_page_preview=False)
+
+        vault["last_tvl"] = current_tvl
+
+# Scheduler
+async def scheduler(app):
+    while True:
+        try:
+            await monitor_vaults(app)
+        except Exception as e:
+            logger.error(f"Monitor error: {e}")
+        await asyncio.sleep(300)
+
+# Main app
 async def main():
     app = ApplicationBuilder().token(BOT_TOKEN).build()
 
+    app.add_handler(CommandHandler("start", start))
     app.add_handler(CommandHandler("check", check_command))
     app.add_handler(CommandHandler("status", status_command))
     app.add_handler(CommandHandler("apy", apy_command))
 
-    job_queue = app.job_queue
-    job_queue.run_repeating(check_deposits, interval=60, first=5)
-
+    asyncio.create_task(scheduler(app))
     await app.run_polling()
 
-if __name__ == "__main__":
+if __name__ == '__main__':
     asyncio.run(main())

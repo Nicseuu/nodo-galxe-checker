@@ -51,15 +51,19 @@ VAULTS = [
 
 # Commands
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Received /start command")
     await update.message.reply_text("Bot is live and ready.")
 
 async def check_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Received /check command")
     await update.message.reply_text("✅ Bot is live and monitoring vaults.")
 
 async def status_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Received /status command")
     await update.message.reply_text("Status OK. Vault tracking is active.")
 
 async def apy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    logger.info("Received /apy command")
     async with httpx.AsyncClient() as client:
         response = await client.get("https://ai-api.nodo.xyz/data-management/ext/vaults?partner=mmt")
         data = response.json()

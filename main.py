@@ -6,6 +6,7 @@ import nest_asyncio
 from telegram import Update
 from telegram.ext import ApplicationBuilder, CommandHandler, ContextTypes
 
+# Apply patch for asyncio event loop reuse
 nest_asyncio.apply()
 
 # Logging
@@ -14,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # Config
 BOT_TOKEN = os.getenv("BOT_TOKEN")
-GROUP_ID = -1002653992951
+GROUP_ID = -1002653992951  # Make sure this is correct and your bot is admin here
 
 # Vaults to monitor
 VAULTS = [
@@ -71,8 +72,7 @@ async def apy_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         apy = round(item.get("apy", 0), 2)
         tvl = round(item.get("tvl", 0))
         messages.append(
-            f"{vault['platform']}: [{vault['name']}]
-\n"
+            f"{vault['platform']}: [{vault['name']}]\n\n"
             f"📈 APY: {apy}%\n"
             f"💰 TVL: ${tvl:,.2f}\n"
             f"🔗 Open Vault: {vault['link']}"
@@ -113,7 +113,7 @@ async def scheduler(app):
             await monitor_vaults(app)
         except Exception as e:
             logger.error(f"Monitor error: {e}")
-        await asyncio.sleep(300)
+        await asyncio.sleep(300)  # 5 mins
 
 # Main app
 async def main():

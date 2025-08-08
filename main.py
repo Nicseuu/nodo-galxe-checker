@@ -135,8 +135,13 @@ async def main():
     asyncio.create_task(scheduler(app))
     await app.initialize()
     await app.start()
-    await app.updater.start_polling()
-    await app.updater.idle()
+    await app.bot.set_my_commands([
+        ("start", "Start the bot"),
+        ("check", "Check if the bot is live"),
+        ("status", "Get current monitoring status"),
+        ("apy", "Show APY and TVL"),
+    ])
+    await app.run_polling()
 
 if __name__ == '__main__':
     asyncio.run(main())

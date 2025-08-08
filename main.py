@@ -136,10 +136,10 @@ async def main():
     await app.initialize()
     await app.start()
     await app.bot.set_my_commands([
-        ("start", "Start the bot"),
-        ("check", "Check if the bot is live"),
-        ("status", "Get current monitoring status"),
-        ("apy", "Show APY and TVL"),
+        ("start", "Start bot"),
+        ("check", "Check if bot is live"),
+        ("status", "Vault tracking status"),
+        ("apy", "Show APY & TVL")
     ])
     await app.run_polling()
 
